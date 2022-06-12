@@ -1,0 +1,18 @@
+[[source]]
+url = "https://pypi.org/simple"
+verify_ssl = true
+name = "pypi"
+
+[packages]
+json-environ = "*"
+mypy = "*"
+py-algorand-sdk = "*"
+pymongo = "*"
+tinyman-py-sdk = {editable = true, git = "https://github.com/tinymanorg/tinyman-py-sdk.git"}
+algofi-amm-py-sdk = {editable = true, git = "https://github.com/Algofiorg/algofi-amm-py-sdk"}
+pactsdk = "*"
+
+[dev-packages]
+
+[requires]
+python_version = "3.10"
