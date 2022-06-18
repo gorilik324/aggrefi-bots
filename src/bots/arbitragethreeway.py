@@ -9,19 +9,13 @@ from algofi_amm.v0.asset import Asset
 from src.classes.account import Account
 from src.classes.asset import AlgoAsset, SwapAmount
 
-from src.helpers import get_algofi_swap_amount_out_scaled, get_amm_clients, get_asset_details, get_db_client, \
+from src.helpers import get_algofi_swap_amount_out_scaled, get_amm_clients, get_asset_details, \
     get_highest_swap_amount_out, get_liquidity_pools, get_network, is_algofi_nanoswap_stable_asset_pair
 
 network = get_network()
 file_path = os.path.abspath(os.path.dirname(__file__))
 env_path = os.path.join(file_path, f"../../env/env-{network}.json")
 env = Environ(path=env_path)
-
-# Get client connection to off-chain DB.
-client = get_db_client()
-if client is None:
-    print("Abandoning this run of the Arbitrage (three-token) bot since connection to the off-chain DB failed")
-    sys.exit(1)
 
 
 def get_configured_assets() -> Dict[int, AlgoAsset]:
