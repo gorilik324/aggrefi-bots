@@ -1,6 +1,6 @@
 from dataclasses import dataclass
 from decimal import Decimal
-from typing import Dict, Tuple
+from typing import Any, Dict, Tuple
 from src.classes.exceptions import SupportedAssetsLookupError
 
 from src.helpers import get_db_client
@@ -74,3 +74,16 @@ class AlgoAsset:
                 value.asset_onchain_id: value for value in supported_assets if value.asset_onchain_id in asset_ids
             }
             return assets
+
+
+@dataclass
+class SwapAmount:
+    """Simple class to store details for an asset out amount from a DEX swap."""
+    to_asset: AlgoAsset
+    from_asset: AlgoAsset
+    quote: Any
+    amount_in: Decimal
+    amount_out: Decimal
+    amount_out_with_slippage: Decimal
+    dex: str
+    slippage: float
