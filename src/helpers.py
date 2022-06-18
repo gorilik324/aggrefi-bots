@@ -3,7 +3,7 @@ import sys
 import json
 import pactsdk
 from decimal import Decimal
-from typing import Any, Dict
+from typing import Any, Dict, Tuple
 from json_environ import Environ
 from pymongo import MongoClient
 from algofi_amm.v0.client import AlgofiAMMMainnetClient, AlgofiAMMTestnetClient
@@ -13,7 +13,8 @@ from algosdk.v2client import algod, indexer
 
 from src.classes.account import Account
 from src.classes.asset import AlgoAsset, SwapAmount
-from src.classes.exceptions import AlgoTradeBotError, AlgofiLPNotFoundError, TinymanLPNotFoundError
+from src.classes.exceptions import AlgoTradeBotError, AlgofiLPNotFoundError, \
+    SupportedAssetsLookupError, TinymanLPNotFoundError
 
 # Which Algorand network are we running against (mainnet or testnet).
 try:
@@ -54,6 +55,42 @@ def get_db_client() -> (MongoClient | None):
             client = None
 
     return client
+
+
+def get_supported_algo_assets():
+    """Returns a dictionary with details of the Algorand assets that can be traded with our bots."""
+    assets: Dict[str, AlgoAsset] = {}
+    client = get_db_client()
+    db = client.aggrefidb
+
+    cursor = db.assets.find({'is_active': True})
+    for doc in cursor:
+        assets[str(doc["_id"])] = AlgoAsset(
+            id=str(doc["_id"]),
+            asset_name=doc["asset_name"],
+            asset_code=doc["asset_code"],
+            asset_onchain_id=doc["asset_onchain_id"],
+            decimals=doc["decimals"],
+            is_native=doc["is_native"],
+            is_active=doc["is_active"]
+        )
+
+    return assets
+
+
+def get_asset_details(asset_ids: Tuple[int, ...]):
+    """Get details of a tuple of specified assets."""
+    supported_assets_dict = get_supported_algo_assets()
+
+    if supported_assets_dict is None:
+        raise SupportedAssetsLookupError(
+            'Unable to retrieve information on supported assets')
+    else:
+        supported_assets = supported_assets_dict.values()
+        assets = {
+            value.asset_onchain_id: value for value in supported_assets if value.asset_onchain_id in asset_ids
+        }
+        return assets
 
 
 def get_amm_clients(account: Account) -> Dict[str, AlgofiAMMTestnetClient | AlgofiAMMMainnetClient | TinymanTestnetClient | TinymanMainnetClient | pactsdk.PactClient]:

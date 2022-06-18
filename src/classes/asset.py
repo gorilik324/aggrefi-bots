@@ -1,9 +1,6 @@
 from dataclasses import dataclass
 from decimal import Decimal
-from typing import Any, Dict, Tuple
-from src.classes.exceptions import SupportedAssetsLookupError
-
-from src.helpers import get_db_client
+from typing import Any
 
 
 @dataclass
@@ -26,7 +23,7 @@ class AlgoAsset:
         Returns:
         int
         """
-        return int(amount * Decimal(10**self.num_decimal_places))
+        return int(amount * Decimal(10**self.decimals))
 
     def get_unscaled_from_scaled_amount(self, amount_scaled: int) -> Decimal:
         """Takes an asset amount that has been scaled by asset's decimals and returns the amount before it was scaled.
@@ -37,43 +34,7 @@ class AlgoAsset:
         Returns:
         decimal.Decimal
         """
-        return Decimal(amount_scaled / (10**self.num_decimal_places))
-
-    @staticmethod
-    def get_supported_algo_assets():
-        """Returns a dictionary with details of the Algorand assets that can be traded with our bots."""
-        assets: Dict[str, AlgoAsset] = {}
-        client = get_db_client()
-        db = client.aggrefidb
-
-        cursor = db.assets.find({'is_active': True})
-        for doc in cursor:
-            assets[str(doc["_id"])] = AlgoAsset(
-                id=str(doc["_id"]),
-                asset_name=doc["asset_name"],
-                asset_code=doc["asset_code"],
-                asset_onchain_id=doc["asset_onchain_id"],
-                decimals=doc["decimals"],
-                is_native=doc["is_native"],
-                is_active=doc["is_active"]
-            )
-
-        return assets
-
-    @staticmethod
-    def get_asset_details(asset_ids: Tuple[int, ...]):
-        """Get details of a tuple of specified assets."""
-        supported_assets_dict = AlgoAsset.get_supported_algo_assets()
-
-        if supported_assets_dict is None:
-            raise SupportedAssetsLookupError(
-                'Unable to retrieve information on supported assets')
-        else:
-            supported_assets = supported_assets_dict.values()
-            assets = {
-                value.asset_onchain_id: value for value in supported_assets if value.asset_onchain_id in asset_ids
-            }
-            return assets
+        return Decimal(amount_scaled / (10**self.decimals))
 
 
 @dataclass
