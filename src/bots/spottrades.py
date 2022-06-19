@@ -50,7 +50,6 @@ def run_bot():
             sys.exit(1)
 
         # Loop through the swaps to be carried out.
-        # for (id, asset1_id, asset2_id, asset_in_id, doc["amt_to_buy_sell"], slippage, min_price_for_sell, do_redeem) in cursor:
         for doc in cursor:
             order_type = doc["order_type"]
             amt_to_buy_sell = doc["amt_to_buy_sell"]
