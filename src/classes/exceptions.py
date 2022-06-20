@@ -6,8 +6,7 @@ class AlgoTradeBotError(Exception):
     """
 
     def __init__(self, message):
-        self.message = message
-        super().__init__(self.message)
+        super().__init__(message)
 
 
 class SupportedAssetsLookupError(AlgoTradeBotError):
@@ -15,7 +14,22 @@ class SupportedAssetsLookupError(AlgoTradeBotError):
     pass
 
 
-class AlgofiLPNotFoundError(AlgoTradeBotError):
+class LPNotFoundError(AlgoTradeBotError):
+    """Exception raised when an LP for a specific Algo/ASA or ASA/ASA asset pair could not be found on one of the supported DEXs.
+
+    Attributes:
+        asset1_id -- ASA ID of the first asset in the pair
+        asset2_id -- ASA ID of the second asset in the pair
+        message -- Explanation of the error
+    """
+
+    def __init__(self, asset1_id, asset2_id, message):
+        self.asset1_id = asset1_id
+        self.asset2_id = asset2_id
+        super().__init__(message)
+
+
+class AlgofiLPNotFoundError(LPNotFoundError):
     """Exception raised when an LP for a specific Algo/ASA or ASA/ASA asset pair could not be found on Algofi's DEX.
 
     Attributes:
@@ -24,13 +38,11 @@ class AlgofiLPNotFoundError(AlgoTradeBotError):
     """
 
     def __init__(self, asset1_id, asset2_id):
-        self.asset1_id = asset1_id
-        self.asset2_id = asset2_id
-        self.message = f"Pool for the asset pair with IDs {asset1_id} and {asset2_id} has not been created and/or initialized on the Algofi DEX as yet!"
-        super().__init__(self.message)
+        message = f"Pool for the asset pair with IDs {asset1_id} and {asset2_id} has not been created and/or initialized on the Algofi DEX as yet!"
+        super().__init__(asset1_id, asset2_id, message)
 
 
-class TinymanLPNotFoundError(AlgoTradeBotError):
+class TinymanLPNotFoundError(LPNotFoundError):
     """Exception raised when an LP for a specific Algo/ASA or ASA/ASA asset pair could not be found on Tinyman's DEX.
 
     Attributes:
@@ -39,7 +51,18 @@ class TinymanLPNotFoundError(AlgoTradeBotError):
     """
 
     def __init__(self, asset1_id, asset2_id):
-        self.asset1_id = asset1_id
-        self.asset2_id = asset2_id
-        self.message = f"Pool for the asset pair with IDs {asset1_id} and {asset2_id} has not been created and/or initialized on the Tinyman DEX as yet!"
-        super().__init__(self.message)
+        message = f"Pool for the asset pair with IDs {asset1_id} and {asset2_id} has not been created and/or initialized on the Tinyman DEX as yet!"
+        super().__init__(asset1_id, asset2_id, message)
+
+
+class PactLPNotFoundError(LPNotFoundError):
+    """Exception raised when an LP for a specific Algo/ASA or ASA/ASA asset pair could not be found on Pact's DEX.
+
+    Attributes:
+        asset1_id -- ASA ID of the first asset in the pair
+        asset2_id -- ASA ID of the second asset in the pair
+    """
+
+    def __init__(self, asset1_id, asset2_id):
+        message = f"Pool for the asset pair with IDs {asset1_id} and {asset2_id} has not been created and/or initialized on the Pact DEX as yet!"
+        super().__init__(asset1_id, asset2_id, message)

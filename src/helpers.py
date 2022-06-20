@@ -13,7 +13,7 @@ from algosdk.v2client import algod, indexer
 
 from src.classes.account import Account
 from src.classes.asset import AlgoAsset, SwapAmount
-from src.classes.exceptions import AlgoTradeBotError, AlgofiLPNotFoundError, \
+from src.classes.exceptions import AlgoTradeBotError, AlgofiLPNotFoundError, PactLPNotFoundError, \
     SupportedAssetsLookupError, TinymanLPNotFoundError
 
 # Which Algorand network are we running against (mainnet or testnet).
@@ -225,6 +225,22 @@ def get_liquidity_pools(amm_clients: Dict[str, Any], asset1_id: int, asset2_id: 
         else:
             pools["tinyman"] = tinyman_pool
 
+    if "pactfi" in amm_clients:
+        if asset1_id == 1:
+            asset1_id = 0
+
+        if asset2_id == 1:
+            asset2_id = 0
+
+        try:
+            asset1 = amm_clients["pactfi"].fetch_asset(asset1_id)
+            asset2 = amm_clients["pactfi"].fetch_asset(asset2_id)
+            pact_pools = amm_clients["pactfi"].fetch_pools_by_assets(
+                asset1, asset2)
+            pools["pactfi"] = pact_pools[0]
+        except Exception as e:
+            raise PactLPNotFoundError(asset1_id, asset2_id)
+
     return pools
 
 
@@ -286,6 +302,31 @@ def get_swap_quotes(amm_clients: Dict[str, Any], pools: Dict[str, Any], from_ass
         print(
             f"Minimum that will be received: {amount_out_with_slippage:.{to_decimals}f} {to_asset.asset_code}\n")
 
+    if "pactfi" in pools:
+        from_asset_id = 0 if from_asset.asset_onchain_id == 1 else from_asset.asset_onchain_id
+        asset_ref = amm_clients["pactfi"].fetch_asset(from_asset_id)
+        slippage_pct = slippage * float(10**2)
+
+        swap = pools["pactfi"].prepare_swap(
+            asset=asset_ref,
+            amount=asset_in_amt_scaled,
+            slippage_pct=slippage_pct
+        )
+
+        swap_effect = swap.effect
+        amount_out = to_asset.get_unscaled_from_scaled_amount(
+            swap_effect.amount_received)
+        amount_out_with_slippage = to_asset.get_unscaled_from_scaled_amount(
+            swap_effect.minimum_amount_received)
+        quotes["pactfi"] = {'amount_in': asset_in_amt, 'amount_out': amount_out,
+                            'amount_out_with_slippage': amount_out_with_slippage, 'slippage': slippage}
+
+        print(
+            f"Pact quote: amount_in={from_asset.asset_code}('{asset_in_amt:.{from_decimals}f}'), "
+            f"amount_out={to_asset.asset_code}('{amount_out:.{to_decimals}f}'), slippage={slippage})")
+        print(
+            f"Minimum that will be received: {amount_out_with_slippage:.{to_decimals}f} {to_asset.asset_code}\n")
+
     return quotes
 
 
@@ -298,11 +339,16 @@ def get_highest_swap_amount_out(amm_clients: Dict[str, Any], dex_pools: Dict[str
     tinyman_amount_out_with_slippage = to_asset.get_unscaled_from_scaled_amount(
         quotes["tinyman"].amount_out_with_slippage.amount)
 
-    if quotes["algofi"]["amount_out"] > tinyman_amount_out:
+    if quotes["algofi"]["amount_out"] >= tinyman_amount_out and quotes["algofi"]["amount_out"] >= quotes["pactfi"]["amount_out"]:
         higher_amt = quotes["algofi"]["amount_out"]
         higher_amt_with_slippage = quotes["algofi"]["amount_out_with_slippage"]
         winning_dex = "Algofi"
         quote = quotes["algofi"]
+    elif quotes["pactfi"]["amount_out"] >= tinyman_amount_out and quotes["pactfi"]["amount_out"] >= quotes["algofi"]["amount_out"]:
+        higher_amt = quotes["pactfi"]["amount_out"]
+        higher_amt_with_slippage = quotes["pactfi"]["amount_out_with_slippage"]
+        winning_dex = "Pact"
+        quote = quotes["pactfi"]
     else:
         higher_amt = tinyman_amount_out
         higher_amt_with_slippage = tinyman_amount_out_with_slippage
