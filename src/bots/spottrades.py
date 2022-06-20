@@ -1,6 +1,7 @@
 import os
 import sys
 import time
+from datetime import datetime
 from decimal import Decimal
 from json_environ import Environ
 from algofi_amm.v0.asset import Asset
@@ -208,7 +209,8 @@ def run_bot():
                 {'$set':
                     {
                         'is_completed': True,
-                        'amt_received': float(swap[1])
+                        'amt_received': float(swap[1]),
+                        'completed_date': datetime.today().replace(microsecond=0)
                     }
                  }
             )
