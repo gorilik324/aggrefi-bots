@@ -264,6 +264,9 @@ def get_swap_quotes(amm_clients: Dict[str, Any], pools: Dict[str, Any], from_ass
     from_decimals = from_asset.decimals
     to_decimals = to_asset.decimals
 
+    # Pact's pool state needs refreshing periodically.
+    pools["pactfi"].update_state()
+
     if "algofi" in pools:
         from_asset_id = 1 if from_asset.asset_onchain_id == 0 else from_asset.asset_onchain_id
         quote_algofi = pools["algofi"].get_swap_exact_for_quote(
