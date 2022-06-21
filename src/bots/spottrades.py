@@ -8,8 +8,8 @@ from algofi_amm.v0.asset import Asset
 from src.classes.account import Account
 
 from src.helpers import get_algofi_swap_amount_out_scaled, get_amm_clients, get_db_client, \
-    get_liquidity_pools, get_network, get_supported_algo_assets, get_swap_quotes, \
-    is_algofi_nanoswap_stable_asset_pair
+    get_liquidity_pools, get_network, get_pact_swap_amount_out_scaled, get_supported_algo_assets, \
+    get_swap_quotes, is_algofi_nanoswap_stable_asset_pair
 
 network = get_network()
 file_path = os.path.abspath(os.path.dirname(__file__))
@@ -89,7 +89,7 @@ def run_bot():
                     print(
                         f"Swap must produce {more_or_less_wording} {buy_sell_amt:.{to_asset_decimals}f} {to_asset_token_code} to meet {order_type} requirements.")
 
-                    if tinyman_amount_out_with_slippage > buy_sell_amt or quotes["algofi"]["amount_out_with_slippage"] > buy_sell_amt:
+                    if tinyman_amount_out_with_slippage >= buy_sell_amt or quotes["algofi"]["amount_out_with_slippage"] >= buy_sell_amt or quotes["pactfi"]["amount_out_with_slippage"] >= buy_sell_amt:
                         requirement_met = True
                 elif "max_amt_to_receive_per_unit" in doc:
                     more_or_less_wording = "no more than"
@@ -98,18 +98,18 @@ def run_bot():
                     print(
                         f"Swap must produce {more_or_less_wording} {buy_sell_amt:.{to_asset_decimals}f} {to_asset_token_code} to meet {order_type} requirements.")
 
-                    if tinyman_amount_out_with_slippage <= buy_sell_amt or quotes["algofi"]["amount_out_with_slippage"] <= buy_sell_amt:
+                    if tinyman_amount_out_with_slippage <= buy_sell_amt or quotes["algofi"]["amount_out_with_slippage"] <= buy_sell_amt or quotes["pactfi"]["amount_out_with_slippage"] <= buy_sell_amt:
                         requirement_met = True
                 else:
                     print("Order not configured properly. Skipping this order.")
                     continue
 
                 if requirement_met:
-                    # Let's figure out if we'll do the swap on Algofi or Tinyman
+                    # Let's figure out if we'll do the swap on Algofi, Tinyman or Pact
                     print(
-                        f"Swap condition met. Deciding whether to do the swap via Algofi or Tinyman...")
+                        f"Swap condition met. Deciding whether to do the swap via Algofi, Tinyman or Pact...")
 
-                    if quotes["algofi"]["amount_out_with_slippage"] >= tinyman_amount_out_with_slippage:
+                    if quotes["algofi"]["amount_out_with_slippage"] >= tinyman_amount_out_with_slippage and quotes["algofi"]["amount_out_with_slippage"] >= quotes["pactfi"]["amount_out_with_slippage"]:
                         print("Executing swap via the Algofi DEX...")
 
                         total_asset_out_received = quotes["algofi"]["amount_out_with_slippage"]
@@ -131,18 +131,40 @@ def run_bot():
 
                         if is_algofi_nanoswap_stable_asset_pair(from_asset_id, to_asset_id):
                             swap_exact_for_txn = lps["algofi"].get_swap_exact_for_txns(
-                                account.address, swap_input_asset, swap_asset_scaled_amount, min_amount_to_receive=min_scaled_amount_to_receive, fee=5000)
+                                account.getAddress(), swap_input_asset, swap_asset_scaled_amount, min_amount_to_receive=min_scaled_amount_to_receive, fee=5000)
                         else:
                             swap_exact_for_txn = lps["algofi"].get_swap_exact_for_txns(
-                                account.address, swap_input_asset, swap_asset_scaled_amount, min_amount_to_receive=min_scaled_amount_to_receive)
+                                account.getAddress(), swap_input_asset, swap_asset_scaled_amount, min_amount_to_receive=min_scaled_amount_to_receive)
 
                         swap_exact_for_txn.sign_with_private_key(
-                            account.address, account.private_key)
+                            account.getAddress(), account.getPrivateKey())
                         result = swap_exact_for_txn.submit(
                             amm_clients["algofi"].algod, wait=True)
 
                         amt = get_algofi_swap_amount_out_scaled(
                             result, amm_clients["algofi"], account)
+                        if amt is not None:
+                            total_asset_out_received = supported_assets[asset_out_id].get_unscaled_from_scaled_amount(
+                                amt)
+                    elif quotes["pactfi"]["amount_out_with_slippage"] >= tinyman_amount_out_with_slippage and quotes["pactfi"]["amount_out_with_slippage"] >= quotes["algofi"]["amount_out_with_slippage"]:
+                        print("Executing swap via the Pact DEX...")
+
+                        total_asset_out_received = quotes["pactfi"]["amount_out_with_slippage"]
+                        print(
+                            f"Swapping {amt_to_buy_sell:.{from_asset_decimals}f} {from_asset_token_code} for {more_or_less_wording} {total_asset_out_received:.{to_asset_decimals}f} {to_asset_token_code}")
+
+                        # Yo, let's do the swap!
+                        swap_tx_group = quotes["pactfi"]["prepared_swap"].prepare_tx_group(
+                            account.getAddress())
+                        signed_group = swap_tx_group.sign(
+                            account.getPrivateKey())
+                        tx_id = amm_clients["pactfi"].algod.send_transactions(
+                            signed_group)
+
+                        # Note: We get our indexer.IndexerClient instance from our Algofi client instance because the Pact client
+                        # does not store an indexer client instance that we can use.
+                        amt = get_pact_swap_amount_out_scaled(
+                            tx_id, amm_clients["algofi"].indexer, account)
                         if amt is not None:
                             total_asset_out_received = supported_assets[asset_out_id].get_unscaled_from_scaled_amount(
                                 amt)
@@ -159,7 +181,7 @@ def run_bot():
 
                         # Sign the group with the wallet's key.
                         transaction_group.sign_with_private_key(
-                            account.address, account.private_key)
+                            account.getAddress(), account.getPrivateKey())
 
                         # Submit transactions to the network and wait for confirmation.
                         amm_clients["tinyman"].submit(
@@ -180,7 +202,7 @@ def run_bot():
                             transaction_group = lps["tinyman"].prepare_redeem_transactions(
                                 amount)
                             transaction_group.sign_with_private_key(
-                                account.address, account.private_key)
+                                account.getAddress(), account.getPrivateKey())
                             amm_clients["tinyman"].submit(
                                 transaction_group, wait=True)
 

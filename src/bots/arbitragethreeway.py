@@ -10,7 +10,8 @@ from src.classes.account import Account
 from src.classes.asset import AlgoAsset, SwapAmount
 
 from src.helpers import get_algofi_swap_amount_out_scaled, get_amm_clients, get_asset_details, \
-    get_highest_swap_amount_out, get_liquidity_pools, get_network, is_algofi_nanoswap_stable_asset_pair
+    get_highest_swap_amount_out, get_liquidity_pools, get_network, get_pact_swap_amount_out_scaled, \
+    is_algofi_nanoswap_stable_asset_pair
 
 network = get_network()
 file_path = os.path.abspath(os.path.dirname(__file__))
@@ -41,7 +42,6 @@ def get_configured_assets() -> Dict[int, AlgoAsset]:
 
 def submit_swap(amm_clients: Dict[str, Any], lps: Dict[str, Any], account: Account, details: SwapAmount, retry_with_new_quote: bool = False):
     leave_loop = False
-    network = get_network()
     swap_to_carry_out: SwapAmount = details
     swap_carried_out: SwapAmount = None
     slippage = swap_to_carry_out.slippage
@@ -75,6 +75,28 @@ def submit_swap(amm_clients: Dict[str, Any], lps: Dict[str, Any], account: Accou
 
                 amt = get_algofi_swap_amount_out_scaled(
                     result, amm_clients["algofi"], account)
+                if amt is not None:
+                    amount_out = swap_to_carry_out.to_asset.get_unscaled_from_scaled_amount(
+                        amt)
+                else:
+                    amount_out = amount_out_with_slippage
+
+                swap_carried_out = SwapAmount(dex=dex, to_asset=swap_to_carry_out.to_asset, from_asset=swap_to_carry_out.from_asset,
+                                              amount_in=swap_to_carry_out.amount_in, amount_out=amount_out, slippage=slippage,
+                                              amount_out_with_slippage=amount_out_with_slippage, quote=swap_to_carry_out.quote)
+            elif dex == "pact":
+                amount_out_with_slippage = swap_to_carry_out.quote["amount_out_with_slippage"]
+
+                swap_tx_group = swap_to_carry_out.quote["prepared_swap"].prepare_tx_group(
+                    account.getAddress())
+                signed_group = swap_tx_group.sign(account.getPrivateKey())
+                tx_id = amm_clients["pactfi"].algod.send_transactions(
+                    signed_group)
+
+                # Note: We get our indexer.IndexerClient instance from our Algofi client instance because the Pact client
+                # does not store an indexer client instance that we can use.
+                amt = get_pact_swap_amount_out_scaled(
+                    tx_id, amm_clients["algofi"].indexer, account)
                 if amt is not None:
                     amount_out = swap_to_carry_out.to_asset.get_unscaled_from_scaled_amount(
                         amt)

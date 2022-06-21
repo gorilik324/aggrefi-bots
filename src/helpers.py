@@ -113,9 +113,9 @@ def get_amm_clients(account: Account) -> Dict[str, AlgofiAMMTestnetClient | Algo
             "", indexer_address, headers=headers)
 
         algofi_client = AlgofiAMMTestnetClient(
-            user_address=account.address, algod_client=algod_client, indexer_client=indexer_client)
+            user_address=account.getAddress(), algod_client=algod_client, indexer_client=indexer_client)
         tinyman_client = TinymanTestnetClient(
-            user_address=account.address, algod_client=algod_client)
+            user_address=account.getAddress(), algod_client=algod_client)
     else:
         algod_address = env("algod:algod:mainnet")
         indexer_address = env("algod:indexer:mainnet")
@@ -127,9 +127,9 @@ def get_amm_clients(account: Account) -> Dict[str, AlgofiAMMTestnetClient | Algo
             "", indexer_address, headers=headers)
 
         algofi_client = AlgofiAMMMainnetClient(
-            user_address=account.address, algod_client=algod_client, indexer_client=indexer_client)
+            user_address=account.getAddress(), algod_client=algod_client, indexer_client=indexer_client)
         tinyman_client = TinymanMainnetClient(
-            user_address=account.address, algod_client=algod_client)
+            user_address=account.getAddress(), algod_client=algod_client)
 
     pact_client = pactsdk.PactClient(algod_client, pact_api_url=pact_api)
 
@@ -319,7 +319,8 @@ def get_swap_quotes(amm_clients: Dict[str, Any], pools: Dict[str, Any], from_ass
         amount_out_with_slippage = to_asset.get_unscaled_from_scaled_amount(
             swap_effect.minimum_amount_received)
         quotes["pactfi"] = {'amount_in': asset_in_amt, 'amount_out': amount_out,
-                            'amount_out_with_slippage': amount_out_with_slippage, 'slippage': slippage}
+                            'amount_out_with_slippage': amount_out_with_slippage,
+                            'slippage': slippage, 'prepared_swap': swap}
 
         print(
             f"Pact quote: amount_in={from_asset.asset_code}('{asset_in_amt:.{from_decimals}f}'), "
@@ -339,7 +340,8 @@ def get_highest_swap_amount_out(amm_clients: Dict[str, Any], dex_pools: Dict[str
     tinyman_amount_out_with_slippage = to_asset.get_unscaled_from_scaled_amount(
         quotes["tinyman"].amount_out_with_slippage.amount)
 
-    if quotes["algofi"]["amount_out"] >= tinyman_amount_out and quotes["algofi"]["amount_out"] >= quotes["pactfi"]["amount_out"]:
+    # and quotes["algofi"]["amount_out"] >= quotes["pactfi"]["amount_out"]:
+    if quotes["algofi"]["amount_out"] >= tinyman_amount_out:
         higher_amt = quotes["algofi"]["amount_out"]
         higher_amt_with_slippage = quotes["algofi"]["amount_out_with_slippage"]
         winning_dex = "Algofi"
@@ -363,7 +365,7 @@ def get_algofi_swap_amount_out_scaled(swap_result, amm_client, account: Account)
     # TODO: Please be sure to test this function thoroughly!
     amount = None
     response = amm_client.indexer.search_transactions_by_address(
-        address=account.address, block=swap_result["confirmed-round"])
+        address=account.getAddress(), block=swap_result["confirmed-round"])
 
     try:
         print(json.dumps(swap_result, indent=4))
@@ -377,7 +379,34 @@ def get_algofi_swap_amount_out_scaled(swap_result, amm_client, account: Account)
                     if txn["tx-type"] == "pay" and txn["sender"] == swap_result["txn"]["txn"]["arcv"]:
                         amount = txn['payment-transaction']['amount']
                         raise StopIteration
-                    elif txn["tx-type"] == "axfer" and txn["asset-transfer-transaction"]["receiver"] == account.address:
+                    elif txn["tx-type"] == "axfer" and txn["asset-transfer-transaction"]["receiver"] == account.getAddress():
+                        amount = txn['asset-transfer-transaction']['amount']
+                        raise StopIteration
+    except StopIteration:
+        pass
+
+    return amount
+
+
+def get_pact_swap_amount_out_scaled(tx_id: str, indexer_client: indexer.IndexerClient, account: Account) -> int:
+    # TODO: Please be sure to test this function thoroughly as well!
+    amount = None
+    tx_response = indexer_client.search_transactions_by_address(
+        address=account.getAddress(), txid=tx_id)
+    block_response = indexer_client.search_transactions_by_address(
+        address=account.getAddress(), block=tx_response["transactions"][0]["confirmed-round"])
+
+    try:
+        print(json.dumps(block_response, indent=4))
+
+        for tx_details in block_response["transactions"]:
+            if tx_details["tx-type"] == "appl" and tx_details["group"] == tx_response["transactions"][0]["group"]:
+                # Check through the inner txns for the one we want
+                for txn in tx_details["inner-txns"]:
+                    if txn["tx-type"] == "pay" and txn["sender"] == tx_response["transactions"][0]["asset-transfer-transaction"]["receiver"]:
+                        amount = txn['payment-transaction']['amount']
+                        raise StopIteration
+                    elif txn["tx-type"] == "axfer" and txn["asset-transfer-transaction"]["receiver"] == account.getAddress():
                         amount = txn['asset-transfer-transaction']['amount']
                         raise StopIteration
     except StopIteration:
