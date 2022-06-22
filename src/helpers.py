@@ -343,8 +343,7 @@ def get_highest_swap_amount_out(amm_clients: Dict[str, Any], dex_pools: Dict[str
     tinyman_amount_out_with_slippage = to_asset.get_unscaled_from_scaled_amount(
         quotes["tinyman"].amount_out_with_slippage.amount)
 
-    # and quotes["algofi"]["amount_out"] >= quotes["pactfi"]["amount_out"]:
-    if quotes["algofi"]["amount_out"] >= tinyman_amount_out:
+    if quotes["algofi"]["amount_out"] >= tinyman_amount_out and quotes["algofi"]["amount_out"] >= quotes["pactfi"]["amount_out"]:
         higher_amt = quotes["algofi"]["amount_out"]
         higher_amt_with_slippage = quotes["algofi"]["amount_out_with_slippage"]
         winning_dex = "Algofi"
