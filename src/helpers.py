@@ -405,3 +405,16 @@ def get_pact_swap_amount_out_scaled(tx_id: str, indexer_client: indexer.IndexerC
         pass
 
     return amount
+
+
+def get_asa_balance(address: str, asset_id: int, algod_client: algod.AlgodClient) -> int:
+    account_info = algod_client.account_info(address)
+    assets = account_info.get("assets")
+    balance = 0
+
+    for asset in assets:
+        if asset.get("asset-id") == asset_id:
+            balance = asset.get("amount")
+            break
+
+    return balance
