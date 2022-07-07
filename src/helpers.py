@@ -97,35 +97,25 @@ def get_amm_clients(account: Account) -> Dict[str, AlgofiAMMTestnetClient | Algo
     """Get and return instances of the supported AMM Clients."""
     network = get_network()
     algod_token = env("algod:api_key")
+    algod_address = env("algod:algod")
+    indexer_address = env("algod:indexer")
+    pact_api = env("pact_api")
     headers = {
         "X-API-Key": algod_token,
         "User-Agent": "algosdk"
     }
 
+    algod_client = algod.AlgodClient(
+        algod_token, algod_address, headers=headers)
+    indexer_client = indexer.IndexerClient(
+        "", indexer_address, headers=headers)
+
     if network == "testnet":
-        algod_address = env("algod:algod:testnet")
-        indexer_address = env("algod:indexer:testnet")
-        pact_api = env("pact_api:testnet")
-
-        algod_client = algod.AlgodClient(
-            algod_token, algod_address, headers=headers)
-        indexer_client = indexer.IndexerClient(
-            "", indexer_address, headers=headers)
-
         algofi_client = AlgofiAMMTestnetClient(
             user_address=account.getAddress(), algod_client=algod_client, indexer_client=indexer_client)
         tinyman_client = TinymanTestnetClient(
             user_address=account.getAddress(), algod_client=algod_client)
     else:
-        algod_address = env("algod:algod:mainnet")
-        indexer_address = env("algod:indexer:mainnet")
-        pact_api = env("pact_api:mainnet")
-
-        algod_client = algod.AlgodClient(
-            algod_token, algod_address, headers=headers)
-        indexer_client = indexer.IndexerClient(
-            "", indexer_address, headers=headers)
-
         algofi_client = AlgofiAMMMainnetClient(
             user_address=account.getAddress(), algod_client=algod_client, indexer_client=indexer_client)
         tinyman_client = TinymanMainnetClient(
