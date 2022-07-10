@@ -21,24 +21,29 @@ env_path = os.path.join(file_path, f"../../env/env-{network}.json")
 env = Environ(path=env_path)
 
 
-def get_configured_assets() -> Dict[int, AlgoAsset]:
-    asset1_id = env("arbitrage:twoway:assets:asset1_id")
-    asset2_id = env("arbitrage:twoway:assets:asset2_id")
-    asset_ids = (int(asset1_id), int(asset2_id))
+def get_configured_assets() -> list[Dict[int, AlgoAsset]]:
+    asset_pairs = env("arbitrage:twoway:assets")
+    asset_pairs = asset_pairs.split(":")
+    assets = []
 
-    try:
-        assets = get_asset_details(asset_ids)
-        if len(assets) == 2:
-            return assets
-        else:
-            for asset_id in asset_ids:
-                if asset_id not in assets:
-                    print(
-                        f"Sorry, the configured asset ID '{asset_id}' is not supported by this trading bot.")
-                    sys.exit(1)
-    except RuntimeError as e:
-        print(f"Error: {e}")
-        sys.exit(1)
+    for pair in asset_pairs:
+        token_ids = pair.split(",")
+        try:
+            tp = (int(token_ids[0]), int(token_ids[1]))
+            asset_pair = get_asset_details(tp)
+            if len(asset_pair) == 2:
+                assets.append(asset_pair)
+            else:
+                for asset_id in tp:
+                    if asset_id not in asset_pair:
+                        print(
+                            f"Sorry, the configured asset ID '{asset_id}' is not supported by this trading bot. All configured asset IDs must be supported for the bot to run.")
+                        sys.exit(1)
+        except RuntimeError as e:
+            print(f"Error: {e}")
+            sys.exit(1)
+
+    return assets
 
 
 def submit_swap(amm_clients: Dict[str, Any], lps: Dict[str, Any], account: Account, details: SwapAmount, retry_with_new_quote: bool = False):
@@ -165,12 +170,11 @@ def submit_swap(amm_clients: Dict[str, Any], lps: Dict[str, Any], account: Accou
     return swap_carried_out
 
 
-def do_round_trip(account: Account, assets: Dict[int, AlgoAsset], amm_clients: Dict[str, Any], trade_amt: Decimal):
+def do_round_trip(account: Account, assets: Dict[int, AlgoAsset], amm_clients: Dict[str, Any], trade_amt: Decimal, min_profit: Decimal):
     # Round trip is Asset 1 -> Asset 2, Asset 2 -> Asset 1.
     asset_ids = [key for key in assets.keys()]
     slippage = float(env("arbitrage:twoway:amounts:slippage"))
     amount_in = trade_amt
-    min_profit = Decimal(env("arbitrage:twoway:amounts:min_profit"))
     from_decimals = assets[asset_ids[0]].decimals
     from_asset_code = assets[asset_ids[0]].asset_code
     to_decimals = assets[asset_ids[1]].decimals
@@ -239,50 +243,62 @@ def do_round_trip(account: Account, assets: Dict[int, AlgoAsset], amm_clients: D
 
 
 def run_bot():
-    account = Account(env("arbitrage:twoway:account:mnemonic"))
-    asset1_id = env("arbitrage:twoway:assets:asset1_id")
-
     print(
         f"Initializing Arbitrage two-token bot on Algorand {network}...\nChecking for configured assets...")
+
+    codes = []
     assets = get_configured_assets()
-    asset_codes = [value.asset_code for value in assets.values()]
-    print(f"Configured assets are: {', '.join(asset_codes)}")
+
+    for asset_pair in assets:
+        asset_codes = [value.asset_code for value in asset_pair.values()]
+        codes.append(', '.join(asset_codes))
+
+    print(f"Configured assets are: ({'), ('.join(codes)})")
 
     print("Instantiating AMM Clients for each supported Algorand DEX...")
+    account = Account(env("arbitrage:twoway:account:mnemonic"))
     amm_clients = get_amm_clients(account)
 
     print("Initialization completed. Starting round trip checks for arbitrage...\n")
-    trade_amt = env("arbitrage:twoway:amounts:starting_amt")
-    trading_all = False
 
-    if trade_amt == "all":
-        # Let's only allow the user to trade all the asset if it's an ASA.
-        if asset_codes[0].lower() == "algo":
-            error_msg = ' '.join((
-                "The \"all\" configuration value for the 'arbitrage.twoway.amounts.starting_amt'",
-                "environment variable is only allowed to be set for ASAs."
-            ))
-            raise AlgoTradeBotError(error_msg)
-        else:
-            trading_all = True
-            trade_amt = get_asa_balance(
-                account.getAddress(), asset1_id, amm_clients["algofi"].algod)
-            trade_amt = assets[asset1_id].get_unscaled_from_scaled_amount(
-                trade_amt)
-    else:
-        trade_amt = Decimal(trade_amt)
+    trade_amts = env("arbitrage:twoway:amounts:starting_amts")
+    min_profits = env("arbitrage:twoway:amounts:min_profits")
+    min_profits = [Decimal(x) for x in min_profits]
 
     while (True):
-        try:
-            do_round_trip(account, assets, amm_clients, trade_amt)
-            if trading_all:
-                trade_amt = get_asa_balance(
-                    account.getAddress(), asset1_id, amm_clients["algofi"].algod)
-                trade_amt = assets[asset1_id].get_unscaled_from_scaled_amount(
-                    trade_amt)
+        for i in range(len(assets)):
+            trading_all = False
+            asset_ids = [key for key in assets[i].keys()]
+            asset_codes = [value.asset_code for value in assets[i].values()]
 
-            print(
-                "--------------------------------------------------------------------------------\n")
-            time.sleep(1)
-        except Exception as e:
-            traceback.print_exc()
+            if trade_amts[i] == "all":
+                # Let's only allow the user to trade all the asset if it's an ASA.
+                if asset_codes[0].lower() == "algo":
+                    error_msg = ' '.join((
+                        "The \"all\" configuration value for any entry in the 'arbitrage.twoway.amounts.starting_amts'",
+                        "environment variable is only allowed to be set for ASAs."
+                    ))
+                    raise AlgoTradeBotError(error_msg)
+                else:
+                    trading_all = True
+                    trade_amt = get_asa_balance(
+                        account.getAddress(), asset_ids[0], amm_clients["algofi"].algod)
+                    trade_amt = assets[i][asset_ids[0]
+                                          ].get_unscaled_from_scaled_amount(trade_amt)
+            else:
+                trade_amt = Decimal(trade_amts[i])
+
+            try:
+                do_round_trip(
+                    account, assets[i], amm_clients, trade_amt, min_profits[i])
+                if trading_all:
+                    trade_amt = get_asa_balance(
+                        account.getAddress(), asset_ids[0], amm_clients["algofi"].algod)
+                    trade_amt = assets[i][asset_ids[0]
+                                          ].get_unscaled_from_scaled_amount(trade_amt)
+
+                print(
+                    "--------------------------------------------------------------------------------\n")
+                time.sleep(1)
+            except Exception as e:
+                traceback.print_exc()
