@@ -4,6 +4,7 @@ import time
 from datetime import datetime
 from decimal import Decimal
 from json_environ import Environ
+from algosdk.future import transaction
 from algofi_amm.v0.asset import Asset
 from src.classes.account import Account
 
@@ -160,6 +161,14 @@ def run_bot():
                             account.getPrivateKey())
                         tx_id = amm_clients["pactfi"].algod.send_transactions(
                             signed_group)
+
+                        # wait for confirmation
+                        try:
+                            transaction.wait_for_confirmation(
+                                amm_clients["pactfi"].algod, tx_id)
+                        except Exception as err:
+                            print(err)
+                            sys.exit(1)
 
                         # Note: We get our indexer.IndexerClient instance from our Algofi client instance because the Pact client
                         # does not store an indexer client instance that we can use.
