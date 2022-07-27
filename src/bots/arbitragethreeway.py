@@ -97,7 +97,7 @@ def submit_swap(amm_clients: Dict[str, Any], lps: Dict[str, Any], account: Accou
                 # wait for confirmation
                 try:
                     transaction.wait_for_confirmation(
-                        amm_clients["pactfi"].algod, tx_id, 10)
+                        amm_clients["pactfi"].algod, tx_id)
                 except Exception as err:
                     print(err)
                     sys.exit(1)
