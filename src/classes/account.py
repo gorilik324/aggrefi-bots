@@ -1,4 +1,4 @@
-from algosdk import mnemonic
+import algosdk
 
 
 class Account:
@@ -9,8 +9,9 @@ class Account:
     private_key: str
 
     def __init__(self, mnemonic_phrase: str) -> None:
-        self.address = mnemonic.to_public_key(mnemonic_phrase)
-        self.private_key = mnemonic.to_private_key(mnemonic_phrase)
+        self.private_key = algosdk.mnemonic.to_private_key(mnemonic_phrase)
+        self.address = algosdk.account.address_from_private_key(
+            self.private_key)
 
     def getAddress(self) -> str:
         return self.address
