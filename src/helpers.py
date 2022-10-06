@@ -57,15 +57,15 @@ def get_db_client() -> (MongoClient | None):
     return client
 
 
-def get_supported_algo_assets():
+def get_supported_algo_assets(index_with_onchain_id: bool = False):
     """Returns a dictionary with details of the Algorand assets that can be traded with our bots."""
-    assets: Dict[str, AlgoAsset] = {}
+    assets: Dict[int | str, AlgoAsset] = {}
     client = get_db_client()
     db = client.aggrefidb
 
     cursor = db.assets.find({'is_active': True})
     for doc in cursor:
-        assets[str(doc["_id"])] = AlgoAsset(
+        assets[doc["asset_onchain_id"] if index_with_onchain_id else str(doc["_id"])] = AlgoAsset(
             id=str(doc["_id"]),
             asset_name=doc["asset_name"],
             asset_code=doc["asset_code"],
@@ -80,16 +80,17 @@ def get_supported_algo_assets():
 
 def get_asset_details(asset_ids: Tuple[int, ...]):
     """Get details of a tuple of specified assets."""
-    supported_assets_dict = get_supported_algo_assets()
+    supported_assets_dict = get_supported_algo_assets(
+        index_with_onchain_id=True)
 
     if supported_assets_dict is None:
         raise SupportedAssetsLookupError(
             'Unable to retrieve information on supported assets')
     else:
-        supported_assets = supported_assets_dict.values()
-        assets = {
-            value.asset_onchain_id: value for value in supported_assets if value.asset_onchain_id in asset_ids
-        }
+        assets: Dict[int, AlgoAsset] = {}
+        for asset_id in asset_ids:
+            assets[asset_id] = supported_assets_dict[asset_id]
+
         return assets
 
 
@@ -155,13 +156,14 @@ def is_algofi_nanoswap_stable_asset_pair(asset1_id: int, asset2_id: int) -> bool
     return (asset1_id in token_asset_ids and asset2_id in token_asset_ids)
 
 
-def get_liquidity_pools(amm_clients: Dict[str, Any], asset1_id: int, asset2_id: int) -> Dict[str, Any]:
-    """Get liquidity pool references for specified token pairs on supported Algorand DEXs.
+def get_liquidity_pools(amm_clients: Dict[str, Any], asset1_id: int, asset2_id: int, raise_error_on_missing_lp: bool = True) -> Dict[str, Any]:
+    """Get liquidity pool references for specified asset pairs on supported Algorand DEXs.
 
     Parameters:
     amm_clients (Dict[str, Any]): Dictionary mapping of the AMM Clients to retrieve LPs for
     asset1_id (int): Asset 1 on-chain ID
     asset2_id (int): Asset 2 on-chain ID
+    raise_error_on_missing_lp (bool): Should we raise an error when an LP for the asset pair is not found on any of the DEXs? Defaults to True.
 
     Returns:
     Dict[str, Any]: A dictionary mapping of the LPs, where the indexes are the names of
@@ -190,11 +192,13 @@ def get_liquidity_pools(amm_clients: Dict[str, Any], asset1_id: int, asset2_id: 
                 pool_type, asset1_id, asset2_id)
 
             if algofi_pool.pool_status == PoolStatus.UNINITIALIZED:
-                raise AlgofiLPNotFoundError(asset1_id, asset2_id)
+                if raise_error_on_missing_lp:
+                    raise AlgofiLPNotFoundError(asset1_id, asset2_id)
             else:
                 pools["algofi"] = algofi_pool
-        except AttributeError as e:
-            raise AlgofiLPNotFoundError(asset1_id, asset2_id)
+        except Exception as e:
+            if raise_error_on_missing_lp:
+                raise AlgofiLPNotFoundError(asset1_id, asset2_id)
 
     if "tinyman" in amm_clients:
         if asset1_id == 1:
@@ -208,10 +212,12 @@ def get_liquidity_pools(amm_clients: Dict[str, Any], asset1_id: int, asset2_id: 
             asset2 = amm_clients["tinyman"].fetch_asset(asset2_id)
             tinyman_pool = amm_clients["tinyman"].fetch_pool(asset1, asset2)
         except Exception as e:
-            raise TinymanLPNotFoundError(asset1_id, asset2_id)
+            if raise_error_on_missing_lp:
+                raise TinymanLPNotFoundError(asset1_id, asset2_id)
 
         if not tinyman_pool.exists:
-            raise TinymanLPNotFoundError(asset1_id, asset2_id)
+            if raise_error_on_missing_lp:
+                raise TinymanLPNotFoundError(asset1_id, asset2_id)
         else:
             pools["tinyman"] = tinyman_pool
 
@@ -229,7 +235,8 @@ def get_liquidity_pools(amm_clients: Dict[str, Any], asset1_id: int, asset2_id: 
                 asset1, asset2)
             pools["pactfi"] = pact_pools[0]
         except Exception as e:
-            raise PactLPNotFoundError(asset1_id, asset2_id)
+            if raise_error_on_missing_lp:
+                raise PactLPNotFoundError(asset1_id, asset2_id)
 
     return pools
 
@@ -328,26 +335,90 @@ def get_highest_swap_amount_out(amm_clients: Dict[str, Any], dex_pools: Dict[str
                                 to_asset: AlgoAsset, asset_in_amt: Decimal, slippage: float) -> SwapAmount:
     quotes = get_swap_quotes(amm_clients, dex_pools,
                              from_asset, to_asset, asset_in_amt, slippage)
-    tinyman_amount_out = to_asset.get_unscaled_from_scaled_amount(
-        quotes["tinyman"].amount_out.amount)
-    tinyman_amount_out_with_slippage = to_asset.get_unscaled_from_scaled_amount(
-        quotes["tinyman"].amount_out_with_slippage.amount)
 
-    if quotes["algofi"]["amount_out"] >= tinyman_amount_out and quotes["algofi"]["amount_out"] >= quotes["pactfi"]["amount_out"]:
-        higher_amt = quotes["algofi"]["amount_out"]
-        higher_amt_with_slippage = quotes["algofi"]["amount_out_with_slippage"]
-        winning_dex = "Algofi"
-        quote = quotes["algofi"]
-    elif quotes["pactfi"]["amount_out"] >= tinyman_amount_out and quotes["pactfi"]["amount_out"] >= quotes["algofi"]["amount_out"]:
-        higher_amt = quotes["pactfi"]["amount_out"]
-        higher_amt_with_slippage = quotes["pactfi"]["amount_out_with_slippage"]
-        winning_dex = "Pact"
-        quote = quotes["pactfi"]
-    else:
+    if "tinyman" in quotes:
+        tinyman_amount_out = to_asset.get_unscaled_from_scaled_amount(
+            quotes["tinyman"].amount_out.amount)
+        tinyman_amount_out_with_slippage = to_asset.get_unscaled_from_scaled_amount(
+            quotes["tinyman"].amount_out_with_slippage.amount)
+
+    # Check if all supported pools are available.
+    if "tinyman" in quotes and "algofi" in quotes and "pactfi" in quotes:
+        if quotes["algofi"]["amount_out"] >= tinyman_amount_out and quotes["algofi"]["amount_out"] >= quotes["pactfi"]["amount_out"]:
+            higher_amt = quotes["algofi"]["amount_out"]
+            higher_amt_with_slippage = quotes["algofi"]["amount_out_with_slippage"]
+            winning_dex = "Algofi"
+            quote = quotes["algofi"]
+        elif quotes["pactfi"]["amount_out"] >= tinyman_amount_out and quotes["pactfi"]["amount_out"] >= quotes["algofi"]["amount_out"]:
+            higher_amt = quotes["pactfi"]["amount_out"]
+            higher_amt_with_slippage = quotes["pactfi"]["amount_out_with_slippage"]
+            winning_dex = "Pact"
+            quote = quotes["pactfi"]
+        else:
+            higher_amt = tinyman_amount_out
+            higher_amt_with_slippage = tinyman_amount_out_with_slippage
+            winning_dex = "Tinyman"
+            quote = quotes["tinyman"]
+
+    # Check if Tinyman and Algofi pools available, but not Pact.
+    if "tinyman" in quotes and "algofi" in quotes and "pactfi" not in quotes:
+        if quotes["algofi"]["amount_out"] >= tinyman_amount_out:
+            higher_amt = quotes["algofi"]["amount_out"]
+            higher_amt_with_slippage = quotes["algofi"]["amount_out_with_slippage"]
+            winning_dex = "Algofi"
+            quote = quotes["algofi"]
+        else:
+            higher_amt = tinyman_amount_out
+            higher_amt_with_slippage = tinyman_amount_out_with_slippage
+            winning_dex = "Tinyman"
+            quote = quotes["tinyman"]
+
+    # Check if Tinyman and Pact pools available, but not Algofi.
+    if "tinyman" in quotes and "pactfi" in quotes and "algofi" not in quotes:
+        if quotes["pactfi"]["amount_out"] >= tinyman_amount_out:
+            higher_amt = quotes["pactfi"]["amount_out"]
+            higher_amt_with_slippage = quotes["pactfi"]["amount_out_with_slippage"]
+            winning_dex = "Pact"
+            quote = quotes["pactfi"]
+        else:
+            higher_amt = tinyman_amount_out
+            higher_amt_with_slippage = tinyman_amount_out_with_slippage
+            winning_dex = "Tinyman"
+            quote = quotes["tinyman"]
+
+    # Check if Algofi and Pact pools available, but not Tinyman.
+    if "algofi" in quotes and "pactfi" in quotes and "tinyman" not in quotes:
+        if quotes["algofi"]["amount_out"] >= quotes["pactfi"]["amount_out"]:
+            higher_amt = quotes["algofi"]["amount_out"]
+            higher_amt_with_slippage = quotes["algofi"]["amount_out_with_slippage"]
+            winning_dex = "Algofi"
+            quote = quotes["algofi"]
+        else:
+            higher_amt = quotes["pactfi"]["amount_out"]
+            higher_amt_with_slippage = quotes["pactfi"]["amount_out_with_slippage"]
+            winning_dex = "Pact"
+            quote = quotes["pactfi"]
+
+    # Check if only Tinyman pool available.
+    if "tinyman" in quotes and "algofi" not in quotes and "pactfi" not in quotes:
         higher_amt = tinyman_amount_out
         higher_amt_with_slippage = tinyman_amount_out_with_slippage
         winning_dex = "Tinyman"
         quote = quotes["tinyman"]
+
+    # Check if only Algofi pool available.
+    if "algofi" in quotes and "tinyman" not in quotes and "pactfi" not in quotes:
+        higher_amt = quotes["algofi"]["amount_out"]
+        higher_amt_with_slippage = quotes["algofi"]["amount_out_with_slippage"]
+        winning_dex = "Algofi"
+        quote = quotes["algofi"]
+
+    # Check if only Pact pool available.
+    if "pactfi" in quotes and "algofi" not in quotes and "tinyman" not in quotes:
+        higher_amt = quotes["pactfi"]["amount_out"]
+        higher_amt_with_slippage = quotes["pactfi"]["amount_out_with_slippage"]
+        winning_dex = "Pact"
+        quote = quotes["pactfi"]
 
     return SwapAmount(to_asset=to_asset, from_asset=from_asset, quote=quote, amount_in=asset_in_amt, amount_out=higher_amt,
                       amount_out_with_slippage=higher_amt_with_slippage, dex=winning_dex, slippage=slippage)
