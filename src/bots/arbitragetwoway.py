@@ -170,8 +170,10 @@ def submit_swap(amm_clients: Dict[str, Any], lps: Dict[str, Any], account: Accou
     return swap_carried_out
 
 
-def do_round_trip(account: Account, assets: Dict[int, AlgoAsset], amm_clients: Dict[str, Any], trade_amt: Decimal, min_profit: Decimal):
-    # Round trip is Asset 1 -> Asset 2, Asset 2 -> Asset 1.
+def do_round_trip(account: Account, assets: Dict[int, AlgoAsset], amm_clients: Dict[str, Any], trade_amt: Decimal, min_profit: Decimal, one_way_only: bool = False):
+    # Round trip is Asset 1 -> Asset 2, Asset 2 -> Asset 1. If one_way_only is set to True
+    # then we're only interested in Asset 1 -> Asset 2 giving us a profit (which works well for a
+    # pair of stablecoins for example).
     asset_ids = [key for key in assets.keys()]
     slippage = float(env("arbitrage:twoway:amounts:slippage"))
     amount_in = trade_amt
@@ -181,8 +183,8 @@ def do_round_trip(account: Account, assets: Dict[int, AlgoAsset], amm_clients: D
     to_asset_code = assets[asset_ids[1]].asset_code
 
     print(
-        f"Fetching liquidity pools (LP) for the {from_asset_code}/{to_asset_code} token pair...")
-    lps = get_liquidity_pools(amm_clients, asset_ids[0], asset_ids[1])
+        f"Fetching liquidity pools (LP) for the {from_asset_code}/{to_asset_code} asset pair...")
+    lps = get_liquidity_pools(amm_clients, asset_ids[0], asset_ids[1], False)
     print("LPs fetched successfully.")
 
     print(
@@ -194,52 +196,69 @@ def do_round_trip(account: Account, assets: Dict[int, AlgoAsset], amm_clients: D
     print(f"Highest swap amount quoted at the {swap_amount_1.dex} DEX at {swap_amount_1.amount_out:.{to_decimals}f} "
           f"({swap_amount_1.amount_out_with_slippage:.{to_decimals}f} with slippage) {to_asset_code} for {amount_in:.{from_decimals}f} {from_asset_code}.\n")
 
-    amount_in = swap_amount_1.amount_out
-    from_decimals = assets[asset_ids[1]].decimals
-    from_asset_code = assets[asset_ids[1]].asset_code
-    to_decimals = assets[asset_ids[0]].decimals
-    to_asset_code = assets[asset_ids[0]].asset_code
-
-    print(
-        f"Getting highest swap quote from DEXs for {amount_in:.{from_decimals}f} {from_asset_code} to {to_asset_code}\n")
-
-    swap_amount_2 = get_highest_swap_amount_out(
-        amm_clients, lps, assets[asset_ids[1]], assets[asset_ids[0]], amount_in, slippage)
-
-    print(f"Highest swap amount quoted at the {swap_amount_2.dex} DEX at {swap_amount_2.amount_out:.{to_decimals}f} "
-          f"({swap_amount_2.amount_out_with_slippage:.{to_decimals}f} with slippage) {to_asset_code} for {amount_in:.{from_decimals}f} {from_asset_code}.\n")
-
-    if swap_amount_2.amount_out >= (trade_amt + min_profit):
-        print(f"Arbitrage condition met. Submitting transactions...")
-        print(f"Performing first swap via the {swap_amount_1.dex} DEX for "
-              f"{swap_amount_1.amount_in:.{swap_amount_1.from_asset.decimals}f} {swap_amount_1.from_asset.asset_code} "
-              f"to {swap_amount_1.to_asset.asset_code}")
-
-        swap_carried_out = submit_swap(
-            amm_clients, lps, account, swap_amount_1, False)
-
-        if swap_carried_out is None:
-            print(
-                "Encountered too much slippage or account balance insufficient to perform swap. Moving on...\n")
-        else:
-            print("")
-            swap_to_carry_out = get_highest_swap_amount_out(
-                amm_clients, lps, assets[asset_ids[1]], assets[asset_ids[0]], swap_carried_out.amount_out, slippage)
-            from_decimals = swap_to_carry_out.from_asset.decimals
-            from_asset_code = swap_to_carry_out.from_asset.asset_code
-            to_asset_code = swap_to_carry_out.to_asset.asset_code
-
-            print(f"Performing second swap via the {swap_to_carry_out.dex} DEX for "
-                  f"{swap_to_carry_out.amount_in:.{from_decimals}f} {from_asset_code} to {to_asset_code}")
+    if one_way_only:
+        if swap_amount_1.amount_out >= (trade_amt + min_profit):
+            print(f"Arbitrage condition met for one-way swap. Submitting transactions...")
+            print(f"Performing swap via the {swap_amount_1.dex} DEX for "
+                  f"{swap_amount_1.amount_in:.{swap_amount_1.from_asset.decimals}f} {swap_amount_1.from_asset.asset_code} "
+                  f"to {swap_amount_1.to_asset.asset_code}")
 
             swap_carried_out = submit_swap(
-                amm_clients, lps, account, swap_to_carry_out, True)
+                amm_clients, lps, account, swap_amount_1, False)
 
             if swap_carried_out is None:
-                print("Unable to perform swap. Terminating bot.\n")
-                sys.exit(1)
+                print(
+                    "Encountered too much slippage or account balance insufficient to perform swap. Moving on...\n")
+        else:
+            print(
+                f"Arbitrage condition for one-way swap not yet met. Stir and repeat...\n")
     else:
-        print(f"Arbitrage condition not yet met. Stir and repeat...\n")
+        amount_in = swap_amount_1.amount_out
+        from_decimals = assets[asset_ids[1]].decimals
+        from_asset_code = assets[asset_ids[1]].asset_code
+        to_decimals = assets[asset_ids[0]].decimals
+        to_asset_code = assets[asset_ids[0]].asset_code
+
+        print(
+            f"Getting highest swap quote from DEXs for {amount_in:.{from_decimals}f} {from_asset_code} to {to_asset_code}\n")
+
+        swap_amount_2 = get_highest_swap_amount_out(
+            amm_clients, lps, assets[asset_ids[1]], assets[asset_ids[0]], amount_in, slippage)
+
+        print(f"Highest swap amount quoted at the {swap_amount_2.dex} DEX at {swap_amount_2.amount_out:.{to_decimals}f} "
+              f"({swap_amount_2.amount_out_with_slippage:.{to_decimals}f} with slippage) {to_asset_code} for {amount_in:.{from_decimals}f} {from_asset_code}.\n")
+
+        if swap_amount_2.amount_out >= (trade_amt + min_profit):
+            print(f"Arbitrage condition met. Submitting transactions...")
+            print(f"Performing first swap via the {swap_amount_1.dex} DEX for "
+                  f"{swap_amount_1.amount_in:.{swap_amount_1.from_asset.decimals}f} {swap_amount_1.from_asset.asset_code} "
+                  f"to {swap_amount_1.to_asset.asset_code}")
+
+            swap_carried_out = submit_swap(
+                amm_clients, lps, account, swap_amount_1, False)
+
+            if swap_carried_out is None:
+                print(
+                    "Encountered too much slippage or account balance insufficient to perform swap. Moving on...\n")
+            else:
+                print("")
+                swap_to_carry_out = get_highest_swap_amount_out(
+                    amm_clients, lps, assets[asset_ids[1]], assets[asset_ids[0]], swap_carried_out.amount_out, slippage)
+                from_decimals = swap_to_carry_out.from_asset.decimals
+                from_asset_code = swap_to_carry_out.from_asset.asset_code
+                to_asset_code = swap_to_carry_out.to_asset.asset_code
+
+                print(f"Performing second swap via the {swap_to_carry_out.dex} DEX for "
+                      f"{swap_to_carry_out.amount_in:.{from_decimals}f} {from_asset_code} to {to_asset_code}")
+
+                swap_carried_out = submit_swap(
+                    amm_clients, lps, account, swap_to_carry_out, True)
+
+                if swap_carried_out is None:
+                    print("Unable to perform swap. Terminating bot.\n")
+                    sys.exit(1)
+        else:
+            print(f"Arbitrage condition not yet met. Stir and repeat...\n")
 
 
 def run_bot():
@@ -264,6 +283,7 @@ def run_bot():
     trade_amts = env("arbitrage:twoway:amounts:starting_amts")
     min_profits = env("arbitrage:twoway:amounts:min_profits")
     min_profits = [Decimal(x) for x in min_profits]
+    one_way_only = env("arbitrage:twoway:one_way_only")
 
     while (True):
         for i in range(len(assets)):
@@ -290,7 +310,7 @@ def run_bot():
 
             try:
                 do_round_trip(
-                    account, assets[i], amm_clients, trade_amt, min_profits[i])
+                    account, assets[i], amm_clients, trade_amt, min_profits[i], one_way_only[i])
                 if trading_all:
                     trade_amt = get_asa_balance(
                         account.getAddress(), asset_ids[0], amm_clients["algofi"].algod)
