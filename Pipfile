@@ -9,7 +9,7 @@ mypy = "*"
 py-algorand-sdk = "*"
 tinyman-py-sdk = {editable = true, git = "https://github.com/tinymanorg/tinyman-py-sdk.git"}
 algofi-amm-py-sdk = {editable = true, git = "https://github.com/Algofiorg/algofi-amm-py-sdk"}
-pactsdk = "*"
+pactsdk = ">=0.5"
 pymongo = {extras = ["srv", "tls"], version = "*"}
 
 [dev-packages]
